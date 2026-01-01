@@ -23,8 +23,8 @@
 #define PCLK_GPIO_NUM     22
 
 // ---------------- Wi-Fi ----------------
-const char* ssid = "V2065";
-const char* password = "vivo1234";
+const char* ssid = "SEARCH FOR YOUR STUPID WIFI SSID";
+const char* password = "PUT YOUR DAMN PASSWORD HERE";
 
 // ---------------- Static IP ----------------
 IPAddress local_IP(192, 168, 43, 84);
