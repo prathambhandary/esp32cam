@@ -5,12 +5,15 @@ import requests
 ESP32_IP = "192.168.43.84"  # ESP32 IP
 CHECK_INTERVAL = 30        # seconds
 # SAVE_FOLDER = "idle"
+STATIC_DIR = "static"
 SAVE_FOLDER = "/data/data/com.termux/files/home/storage/pictures/esp32/idle"
+
+delay_offset = 1700
 
 if not os.path.exists(SAVE_FOLDER):
     os.makedirs(SAVE_FOLDER)
 
-last_downloaded = len(os.listdir(SAVE_FOLDER))
+last_downloaded = len(os.listdir(SAVE_FOLDER))+delay_offset
 print(last_downloaded)
 
 
@@ -18,7 +21,7 @@ downloaded_files = set(os.listdir(SAVE_FOLDER))
 
 def get_last_image_name():
     try:
-        r = requests.get(f"http://{ESP32_IP}/last", timeout=10)
+        r = requests.get(f"http://{ESP32_IP}/last", timeout=20)
         if r.status_code == 200:
             name = r.text.strip()
             if name:
@@ -35,10 +38,14 @@ def download_image(filename):
     # print(url)
 
     try:
-        resp = requests.get(url, timeout=5)
+        resp = requests.get(url, timeout=15)
         print("Response code for", filename, ":", resp.status_code)
+        time.sleep(10)
         if resp.status_code == 200:
             path = os.path.join(SAVE_FOLDER, filename)
+            with open(path, "wb") as f:
+                f.write(resp.content)
+            path = os.path.join(STATIC_DIR, "latest.jpg")
             with open(path, "wb") as f:
                 f.write(resp.content)
             downloaded_files.add(filename)
@@ -65,4 +72,4 @@ while True:
             else:
                 last_downloaded += 1
 
-        time.sleep(CHECK_INTERVAL)
+        time.sleep(CHECK_INTERVAL-10)

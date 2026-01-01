@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Live ESP32 Camera</title>
+
+  <style>
+:root {
+  --bg1: #e8faff;
+  --bg2: #fff6e5;
+
+  --card: #ffffff;
+  --accent: #00b4d8;        /* sky blue */
+  --accent-2: #06d6a0;      /* mint green */
+  --accent-soft: #e0f7fa;
+
+  --text: #1f2937;
+  --muted: #6b7280;
+  --border: #d1f0ff;
+}
+
+* {
+  box-sizing: border-box;
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: linear-gradient(135deg, var(--bg1), var(--bg2));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  color: var(--text);
+}
+
+.container {
+  background: var(--card);
+  width: 100%;
+  max-width: 720px;
+  padding: 18px;
+  border-radius: 24px;
+  box-shadow: 0 30px 60px rgba(0, 180, 216, 0.18);
+  text-align: center;
+}
+
+h2 {
+  margin: 0 0 12px;
+  font-size: 1.25rem;
+  color: var(--accent);
+  background: var(--accent-soft);
+  padding: 12px;
+  border-radius: 16px;
+}
+
+.count {
+  font-weight: 700;
+}
+
+.image-wrapper {
+  width: 100%;
+  border-radius: 18px;
+  overflow: hidden;
+  background: #f9feff;
+  border: 2px solid var(--border);
+}
+
+#cam {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+/* Controls */
+.controls {
+  display: flex;
+  gap: 12px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+button {
+  border: none;
+  padding: 10px 16px;
+  border-radius: 14px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  color: #fff;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  box-shadow: 0 10px 20px rgba(6, 214, 160, 0.25);
+}
+
+button:active {
+  transform: scale(0.97);
+}
+
+.footer {
+  margin-top: 10px;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+/* Mobile */
+@media (max-width: 480px) {
+  h2 {
+    font-size: 1.05rem;
+  }
+
+  .container {
+    padding: 14px;
+    border-radius: 18px;
+  }
+}
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <h2>
+      Latest ESP32 Image #
+      <span class="count">{{ count }}</span>
+    </h2>
+
+    <div class="image-wrapper">
+      <img id="cam"
+           src="{{ url_for('static', filename='latest.jpg') }}"
+           alt="ESP32 Camera Feed">
+    </div>
+
+    <div class="controls">
+      <!-- <button onclick="refreshImage()">🔄 Refresh</button> -->
+    </div>
+
+    <div class="footer">
+      Auto-refresh every <span id="intervalText"></span> seconds
+    </div>
+  </div>
+
+  <script>
+    const REFRESH_INTERVAL = 30; // seconds
+    const img = document.getElementById("cam");
+    const intervalText = document.getElementById("intervalText");
+
+    intervalText.textContent = REFRESH_INTERVAL;
+
+    function refreshImage() {
+      // cache-buster
+      img.src = "{{ url_for('static', filename='latest.jpg') }}" + "?t=" + Date.now();
+      var counter = document.getElementsByClassName("count")[0].textContent;
+      counter = (Number(counter)+1)
+      document.getElementsByClassName("count")[0].textContent = counter;
+    }
+
+    // auto reload
+    setInterval(refreshImage, REFRESH_INTERVAL * 1000);
+  </script>
+</body>
+</html>
