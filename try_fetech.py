@@ -4,13 +4,15 @@ import requests
 
 ESP32_IP = "192.168.43.84"  # ESP32 IP
 CHECK_INTERVAL = 30        # seconds
-SAVE_FOLDER = "idle"
-
-last_downloaded = len(os.listdir("idle"))
-print(last_downloaded)
+# SAVE_FOLDER = "idle"
+SAVE_FOLDER = "/data/data/com.termux/files/home/storage/pictures/esp32/idle"
 
 if not os.path.exists(SAVE_FOLDER):
     os.makedirs(SAVE_FOLDER)
+
+last_downloaded = len(os.listdir(SAVE_FOLDER))
+print(last_downloaded)
+
 
 downloaded_files = set(os.listdir(SAVE_FOLDER))
 
