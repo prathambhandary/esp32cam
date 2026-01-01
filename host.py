@@ -3,9 +3,12 @@ import os
 
 app = Flask(__name__)
 
+STATIC_DIR = "static"
+SAVE_FOLDER = "/data/data/com.termux/files/home/storage/pictures/esp32/idle"
+
 @app.route("/")
 def index():
-    count = len(os.listdir("idle"))+1500
+    count = len(os.listdir(SAVE_FOLDER))+1500
     return render_template("index.html", count=count)
 
 if __name__ == "__main__":
