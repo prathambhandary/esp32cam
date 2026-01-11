@@ -121,8 +121,7 @@ button:active {
 <body>
   <div class="container">
     <h2>
-      Latest ESP32 Image #
-      <span class="count">{{ count }}</span>
+      LIVE ESP32 Image
     </h2>
 
     <div class="image-wrapper">
@@ -141,7 +140,7 @@ button:active {
   </div>
 
   <script>
-    const REFRESH_INTERVAL = 30; // seconds
+    const REFRESH_INTERVAL = 10; // seconds
     const img = document.getElementById("cam");
     const intervalText = document.getElementById("intervalText");
 

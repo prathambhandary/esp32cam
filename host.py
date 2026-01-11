@@ -8,7 +8,7 @@ SAVE_FOLDER = "/data/data/com.termux/files/home/storage/pictures/esp32/idle"
 
 @app.route("/")
 def index():
-    count = len(os.listdir(SAVE_FOLDER))+1500
+    count = len(os.listdir(SAVE_FOLDER))+1700
     return render_template("index.html", count=count)
 
 if __name__ == "__main__":

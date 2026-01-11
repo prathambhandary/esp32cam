@@ -35,7 +35,7 @@ def download_image(filename):
     if len(url) == 39:
         url = f"http://{ESP32_IP}/image/idle_0{filename}"
 
-    # print(url)
+    print(url)
 
     try:
         resp = requests.get(url, timeout=15)
@@ -62,10 +62,14 @@ print("Laptop auto-fetch started")
 
 while True:
     latest = get_last_image_name()
-
     if latest:
-        while last_downloaded < int(latest[5:9])+1:
-            next_filename = f"{last_downloaded:04d}.jpg"
+        last_index = 9
+        if latest[9] in "0123456789":
+            last_index += 1
+        while last_downloaded < int(latest[5:last_index])+1:
+            next_filename = f"{last_downloaded:05d}.jpg"
+            if last_downloaded < 10000:
+                next_filename = f"{last_downloaded:04d}.jpg"
             if next_filename not in downloaded_files:
                 if download_image(next_filename):
                     last_downloaded += 1
