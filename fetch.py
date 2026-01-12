@@ -6,7 +6,8 @@ from datetime import datetime
 ESP32_IP = "192.168.43.84"
 CHECK_INTERVAL = 15
 
-BASE_DIR = "idle"
+# BASE_DIR = "idle"
+BASE_DIR = "/data/data/com.termux/files/home/storage/pictures/esp32/idle"
 STATIC_DIR = "static"
 CURSOR_FILE = "last_seen.txt"
 
