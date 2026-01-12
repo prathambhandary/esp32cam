@@ -26,8 +26,8 @@
 #define PCLK_GPIO_NUM     22
 
 // ---------------- Wi-Fi ----------------
-const char* ssid = "O2065";
-const char* password = "oppo1234";
+const char* ssid = "ESPPHONE";
+const char* password = "password";
 
 // ---------------- Static IP ----------------
 IPAddress local_IP(192, 168, 43, 84);
