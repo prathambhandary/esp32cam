@@ -7,7 +7,7 @@
 #include <HTTPClient.h> 
 #include <time.h>
 // ---------------- Flash ----------------
-#define FLASH_GPIO 4  // AI Thinker default flash LED
+// #define FLASH_GPIO 4  // AI Thinker default flash LED
 
 // ---------------- AI Thinker ESP32-CAM pin map ----------------
 #define PWDN_GPIO_NUM     32
@@ -39,13 +39,14 @@ IPAddress subnet(255, 255, 255, 0);
 // ---------------- Globals ----------------
 WebServer server(80);
 unsigned long lastCapture = 0;
-const unsigned long interval = 30000; // 30 sec
+const unsigned long interval = 15000; // 30 sec
 unsigned long lastReset = 0;
 const unsigned long RESET_INTERVAL = 30UL * 60UL * 1000UL; // 30 minutes
 
 // ---------------- HTTP ----------------
 void handleListIdle() {
   String after = server.hasArg("after") ? server.arg("after") : "";
+  int limit = server.hasArg("limit") ? server.arg("limit").toInt() : 30;
 
   File root = SD_MMC.open("/idle");
   if (!root) {
@@ -55,9 +56,10 @@ void handleListIdle() {
 
   String out = "[";
   bool first = true;
+  int count = 0;
 
   File f = root.openNextFile();
-  while (f) {
+  while (f && count < limit) {
     String name = String(f.name());
     int slash = name.lastIndexOf('/');
     if (slash >= 0) name = name.substring(slash + 1);
@@ -66,6 +68,7 @@ void handleListIdle() {
       if (!first) out += ",";
       out += "\"" + name + "\"";
       first = false;
+      count++;
     }
 
     f = root.openNextFile();
@@ -189,8 +192,8 @@ void printTime() {
 void setup() {
   Serial.begin(115200);
 
-  pinMode(FLASH_GPIO, OUTPUT);
-  digitalWrite(FLASH_GPIO, LOW);
+  // pinMode(FLASH_GPIO, OUTPUT);
+  // digitalWrite(FLASH_GPIO, LOW);
 
   setupCamera();
 

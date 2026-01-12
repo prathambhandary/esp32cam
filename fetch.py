@@ -1,81 +1,156 @@
 import os
 import time
 import requests
+from datetime import datetime, timedelta
 
 ESP32_IP = "192.168.43.84"
 CHECK_INTERVAL = 5  # seconds
-
+BASE_DIR = "idle"
 STATIC_DIR = "static"
-SAVE_FOLDER = "idle"
-os.makedirs(SAVE_FOLDER, exist_ok=True)
+CURSOR_FILE = "last_seen.txt"
+
+os.makedirs(BASE_DIR, exist_ok=True)
 os.makedirs(STATIC_DIR, exist_ok=True)
-
-last_seen = None
-
-def get_remote_list():
-    global last_seen
-    url = f"http://{ESP32_IP}/list_idle"
-    if last_seen:
-        url += f"?after={last_seen}"
+# print(1)
+# Load last_seen from disk (fast resume)
+if os.path.exists(CURSOR_FILE):
+    with open(CURSOR_FILE, "r") as f:
+        last_seen = f.read().strip() or None
+    flag = True
+    print("Resuming from:", last_seen)
+else:
+    last_seen = None
+    flag = False
+# print(2)
+def save_cursor(name):
     try:
-        r = requests.get(url, timeout=10)
-        if r.status_code == 200:
-            try:
-                files = r.json()
-                if isinstance(files, list):
-                    return files
-            except Exception as e:
-                print("JSON decode error:", e)
-    except requests.exceptions.RequestException as e:
-        print("Network error getting file list:", e)
+        with open(CURSOR_FILE, "w") as f:
+            f.write(name)
     except Exception as e:
-        print("Unexpected error getting file list:", e)
-    return []
+        print("Cursor save error:", e)
 
+# ---------- Guessing function ----------
+def next_name(name, n=1):
+    """Return the next second timestamped filename."""
+    try:
+        t = datetime.strptime(name, "%Y%m%d_%H%M%S.jpg")
+        t += timedelta(seconds=n)
+        return t.strftime("%Y%m%d_%H%M%S.jpg")
+    except Exception as e:
+        print("next_name parse error:", name, e)
+        return None
+
+# ---------- Download ----------
 def download_image(name):
-    url = f"http://{ESP32_IP}/image/{name}"
-    for attempt in range(3):  # retry up to 3 times
-        try:
-            r = requests.get(url, timeout=20)
-            if r.status_code == 200:
-                # save full archive
-                try:
-                    with open(os.path.join(SAVE_FOLDER, name), "wb") as f:
+    if not name.endswith(".jpg") or name.startswith("1970"):
+        return False
+
+    try:
+        date_part = name[0:8]
+        hour_part = name[9:11]
+        save_dir = os.path.join(BASE_DIR, date_part, hour_part)
+        os.makedirs(save_dir, exist_ok=True)
+
+        local_path = os.path.join(save_dir, name)
+        url = f"http://{ESP32_IP}/image/{name}"
+
+        for attempt in range(1):
+            try:
+                r = requests.get(url, timeout=20)
+                if r.status_code == 200:
+                    with open(local_path, "wb") as f:
                         f.write(r.content)
-                    # save/update latest.jpg
                     with open(os.path.join(STATIC_DIR, "latest.jpg"), "wb") as f:
                         f.write(r.content)
-                    print("Downloaded:", name)
+                    # print("Downloaded:", name)
+                    save_cursor(name)
                     return True
-                except Exception as e:
-                    print("File write error:", name, e)
-            else:
-                print(f"Failed {name}: HTTP {r.status_code}")
-        except requests.exceptions.RequestException as e:
-            print(f"Network error downloading {name} (attempt {attempt+1}):", e)
-        except Exception as e:
-            print(f"Unexpected error downloading {name} (attempt {attempt+1}):", e)
-        time.sleep(2)  # wait before retry
+                elif r.status_code == 404:
+                    # print("Failed: ", name)
+                    return False  # guessing stop
+                else:
+                    print(f"HTTP {r.status_code}:", name)
+            except Exception as e:
+                print(f"Retry {attempt+1} failed:", e)
+            time.sleep(0.2)
+    except Exception as e:
+        print("Parse/save error:", name, e)
     return False
 
-print("ESP32-CAM full idle sync started")
+# ---------- Main loop ----------
+print("ESP32-CAM hour-wise guessing sync started")
+
+# ---------- ANSI COLORS ----------
+RESET = "\033[0m"
+RED = "\033[91m"
+GREEN = "\033[92m"
+YELLOW = "\033[93m"
+CYAN = "\033[96m"
+MAGENTA = "\033[95m"
+
+# ---------- Main loop prints ----------
+print(f"{CYAN}ESP32-CAM hour-wise guessing sync started{RESET}")
 
 while True:
     try:
-        local_files = set(os.listdir(SAVE_FOLDER))
-        remote_files = get_remote_list()
+        if last_seen:
+            if flag:
+                guess = next_name(last_seen, n=14)
+                flag = False
+            else:
+                guess = next_name(last_seen)
+            if not guess:
+                time.sleep(CHECK_INTERVAL)
+                continue
 
-        for name in sorted(remote_files):
-            if name not in local_files:
-                success = download_image(name)
-                if success:
-                    last_seen = name
-                time.sleep(0.5)  # gentle to ESP32
+            # check against current time
+            try:
+                guess_dt = datetime.strptime(guess, "%Y%m%d_%H%M%S.jpg")
+                now = datetime.now()
+                if guess_dt > now:
+                    wait_secs = (guess_dt - now).total_seconds()
+                    if wait_secs > 0:
+                        print(f"{YELLOW}Waiting {30}s for next image: {guess}{RESET}")
+                        # time.sleep(wait_secs+5)
+                        time.sleep(30)
+            except Exception as e:
+                print(f"{RED}Time parse error:{RESET} {guess} -> {e}")
 
-        time.sleep(CHECK_INTERVAL)
+            success = download_image(guess)
+            if success:
+                last_seen = guess
+                save_cursor(last_seen)
+                print(f"{GREEN}✔ Downloaded:{RESET} {guess}")
+                time.sleep(0.2)
+                flag = True
+            else:
+                last_seen = guess
+                print(f"{MAGENTA}⏳ File not ready yet:{RESET} {guess}")
+                time.sleep(2)
+                continue
+
+        else:
+            try:
+                url = f"http://{ESP32_IP}/list_idle"
+                print(f"{CYAN}Fetching initial list:{RESET} {url}")
+                r = requests.get(url, timeout=30)
+                if r.status_code == 200:
+                    data = r.json()
+                    if isinstance(data, list) and data:
+                        last_seen = data[-1]
+                        save_cursor(last_seen)
+                        print(f"{GREEN}Starting from:{RESET} {last_seen}")
+                else:
+                    print(f"{RED}List HTTP {r.status_code}{RESET}")
+                    time.sleep(CHECK_INTERVAL)
+            except Exception as e:
+                print(f"{RED}Initial list error:{RESET} {e}")
+                time.sleep(CHECK_INTERVAL)
+
     except KeyboardInterrupt:
-        print("Stopping downloader...")
+        print(f"{YELLOW}Stopped by user.{RESET}")
         break
     except Exception as e:
-        print("Unexpected error in main loop:", e)
-        time.sleep(5)  # wait a bit before retrying
+        print(f"{RED}Main loop error:{RESET} {e}")
+        time.sleep(5)
+      
