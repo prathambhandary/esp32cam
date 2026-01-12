@@ -3,11 +3,9 @@
 #include "SD_MMC.h"
 #include <WiFi.h>
 #include <WebServer.h>
-#include "esp_system.h"   // for esp_restart()
+#include "esp_system.h"
 #include <HTTPClient.h> 
 #include <time.h>
-// ---------------- Flash ----------------
-// #define FLASH_GPIO 4  // AI Thinker default flash LED
 
 // ---------------- AI Thinker ESP32-CAM pin map ----------------
 #define PWDN_GPIO_NUM     32
@@ -38,50 +36,106 @@ IPAddress subnet(255, 255, 255, 0);
 
 // ---------------- Globals ----------------
 WebServer server(80);
+
 unsigned long lastCapture = 0;
-const unsigned long interval = 15000; // 30 sec
+const unsigned long interval = 20000;
+
 unsigned long lastReset = 0;
-const unsigned long RESET_INTERVAL = 30UL * 60UL * 1000UL; // 30 minutes
+const unsigned long RESET_INTERVAL = 30UL * 60UL * 1000UL;
 
-// ---------------- HTTP ----------------
-void handleListIdle() {
-  String after = server.hasArg("after") ? server.arg("after") : "";
-  int limit = server.hasArg("limit") ? server.arg("limit").toInt() : 30;
+// 🔥 NEW: latest image state
+time_t latestEpoch = 0;
+String latestName = "";
 
-  File root = SD_MMC.open("/idle");
-  if (!root) {
-    server.send(500, "text/plain", "SD error");
-    return;
-  }
+// ---------------- Camera ----------------
+void setupCamera() {
+  camera_config_t c;
+  c.ledc_channel = LEDC_CHANNEL_0;
+  c.ledc_timer   = LEDC_TIMER_0;
+  c.pin_d0 = Y2_GPIO_NUM;
+  c.pin_d1 = Y3_GPIO_NUM;
+  c.pin_d2 = Y4_GPIO_NUM;
+  c.pin_d3 = Y5_GPIO_NUM;
+  c.pin_d4 = Y6_GPIO_NUM;
+  c.pin_d5 = Y7_GPIO_NUM;
+  c.pin_d6 = Y8_GPIO_NUM;
+  c.pin_d7 = Y9_GPIO_NUM;
+  c.pin_xclk = XCLK_GPIO_NUM;
+  c.pin_pclk = PCLK_GPIO_NUM;
+  c.pin_vsync = VSYNC_GPIO_NUM;
+  c.pin_href = HREF_GPIO_NUM;
+  c.pin_sccb_sda = SIOD_GPIO_NUM;
+  c.pin_sccb_scl = SIOC_GPIO_NUM;
+  c.pin_pwdn = PWDN_GPIO_NUM;
+  c.pin_reset = RESET_GPIO_NUM;
 
-  String out = "[";
-  bool first = true;
-  int count = 0;
+  c.xclk_freq_hz = 20000000;
+  c.pixel_format = PIXFORMAT_JPEG;
+  c.frame_size = FRAMESIZE_VGA;
+  c.jpeg_quality = 10;
+  c.fb_count = 1;
 
-  File f = root.openNextFile();
-  while (f && count < limit) {
-    String name = String(f.name());
-    int slash = name.lastIndexOf('/');
-    if (slash >= 0) name = name.substring(slash + 1);
-
-    if (after == "" || name > after) {
-      if (!first) out += ",";
-      out += "\"" + name + "\"";
-      first = false;
-      count++;
-    }
-
-    f = root.openNextFile();
-  }
-
-  out += "]";
-  server.send(200, "application/json", out);
+  esp_camera_init(&c);
 }
 
+// ---------------- Capture ----------------
+void takePhoto() {
+  camera_fb_t *fb = esp_camera_fb_get();
+  if (!fb) return;
 
+  time_t now;
+  time(&now);
+  latestEpoch = now;
+
+  struct tm *t = localtime(&now);
+
+  char name[32];
+  sprintf(name, "%04d%02d%02d_%02d%02d%02d.jpg",
+          t->tm_year + 1900, t->tm_mon + 1, t->tm_mday,
+          t->tm_hour, t->tm_min, t->tm_sec);
+
+  // Save archive image
+  File f = SD_MMC.open(String("/idle/") + name, FILE_WRITE);
+  if (f) {
+    f.write(fb->buf, fb->len);
+    f.close();
+  }
+
+  // 🔥 Overwrite latest.jpg
+  File latest = SD_MMC.open("/latest.jpg", FILE_WRITE);
+  if (latest) {
+    latest.write(fb->buf, fb->len);
+    latest.close();
+  }
+
+  latestName = name;
+  Serial.println(String("Captured: ") + name);
+
+  esp_camera_fb_return(fb);
+}
+
+// ---------------- HTTP handlers ----------------
+void handleLatestImage() {
+  File f = SD_MMC.open("/latest.jpg");
+  if (!f) {
+    server.send(404, "text/plain", "No image yet");
+    return;
+  }
+  server.streamFile(f, "image/jpeg");
+  f.close();
+}
+
+void handleLastTimestamp() {
+  String json = "{";
+  json += "\"epoch\":" + String(latestEpoch) + ",";
+  json += "\"name\":\"" + latestName + "\"";
+  json += "}";
+
+  server.send(200, "application/json", json);
+}
 
 void handleImage() {
-  String name = server.uri().substring(7);
+  String name = server.uri().substring(7); // "/image/"
   File f = SD_MMC.open("/idle/" + name);
   if (!f) {
     server.send(404, "text/plain", "Not found");
@@ -91,8 +145,34 @@ void handleImage() {
   f.close();
 }
 
+
+// (Optional) keep old endpoints if you still want them
+void handleListIdle() {
+  File root = SD_MMC.open("/idle");
+  if (!root) {
+    server.send(500, "text/plain", "SD error");
+    return;
+  }
+
+  String out = "[";
+  bool first = true;
+
+  File f = root.openNextFile();
+  while (f) {
+    if (!first) out += ",";
+    out += "\"" + String(f.name()) + "\"";
+    first = false;
+    f = root.openNextFile();
+  }
+  out += "]";
+  server.send(200, "application/json", out);
+}
+
 void setupHTTP() {
+  server.on("/latest.jpg", handleLatestImage);
+  server.on("/last_timestamp", handleLastTimestamp);
   server.on("/list_idle", handleListIdle);
+
   server.onNotFound([]() {
     if (server.uri().startsWith("/image/")) {
       handleImage();
@@ -100,64 +180,10 @@ void setupHTTP() {
       server.send(404, "text/plain", "Not found");
     }
   });
+
   server.begin();
 }
 
-// ---------------- Camera ----------------
-void setupCamera() {
-    camera_config_t c;
-    c.ledc_channel = LEDC_CHANNEL_0;
-    c.ledc_timer   = LEDC_TIMER_0;
-    c.pin_d0 = Y2_GPIO_NUM;
-    c.pin_d1 = Y3_GPIO_NUM;
-    c.pin_d2 = Y4_GPIO_NUM;
-    c.pin_d3 = Y5_GPIO_NUM;
-    c.pin_d4 = Y6_GPIO_NUM;
-    c.pin_d5 = Y7_GPIO_NUM;
-    c.pin_d6 = Y8_GPIO_NUM;
-    c.pin_d7 = Y9_GPIO_NUM;
-    c.pin_xclk = XCLK_GPIO_NUM;
-    c.pin_pclk = PCLK_GPIO_NUM;
-    c.pin_vsync = VSYNC_GPIO_NUM;
-    c.pin_href = HREF_GPIO_NUM;
-    c.pin_sccb_sda = SIOD_GPIO_NUM;
-    c.pin_sccb_scl = SIOC_GPIO_NUM;
-    c.pin_pwdn = PWDN_GPIO_NUM;
-    c.pin_reset = RESET_GPIO_NUM;
-
-    c.xclk_freq_hz = 20000000;
-    c.pixel_format = PIXFORMAT_JPEG;
-    c.frame_size = FRAMESIZE_VGA;
-    c.jpeg_quality = 10;
-    c.fb_count = 1;
-
-    esp_camera_init(&c);
-}
-
-
-// ---------------- Capture ----------------
-void takePhoto() {
-  camera_fb_t *fb = esp_camera_fb_get();
-  if (!fb) return;
-
-  time_t now;
-  time(&now);
-  struct tm *t = localtime(&now);
-
-  char name[32];
-  sprintf(name, "/idle/%04d%02d%02d_%02d%02d%02d.jpg",
-          t->tm_year + 1900, t->tm_mon + 1, t->tm_mday,
-          t->tm_hour, t->tm_min, t->tm_sec);
-
-  File f = SD_MMC.open(name, FILE_WRITE);
-  if (f) {
-    f.write(fb->buf, fb->len);
-    f.close();
-    Serial.println(name);
-  }
-
-  esp_camera_fb_return(fb);
-}
 
 // ---------------- Time sync ----------------
 void syncTimeFromPhone() {
@@ -170,30 +196,17 @@ void syncTimeFromPhone() {
     if (i != -1) {
       long epoch = payload.substring(payload.indexOf(":", i) + 1).toInt();
       struct timeval tv;
-      long timezoneOffset = 5*3600 + 30*60; // IST = UTC+5:30
-      tv.tv_sec = epoch + timezoneOffset;
+      tv.tv_sec = epoch + (5 * 3600 + 30 * 60); // IST
       tv.tv_usec = 0;
       settimeofday(&tv, NULL);
-      Serial.println("Time synced from phone");
     }
-  } else {
-    Serial.println("Time sync failed");
   }
   http.end();
-}
-
-void printTime() {
-  time_t now;
-  time(&now);
-  Serial.println(ctime(&now));
 }
 
 // ---------------- Setup ----------------
 void setup() {
   Serial.begin(115200);
-
-  // pinMode(FLASH_GPIO, OUTPUT);
-  // digitalWrite(FLASH_GPIO, LOW);
 
   setupCamera();
 
@@ -203,19 +216,12 @@ void setup() {
   WiFi.config(local_IP, gateway, subnet);
   WiFi.begin(ssid, password);
 
-  Serial.print("Connecting");
-  while (WiFi.status() != WL_CONNECTED) { 
-    delay(300);
-    Serial.print(".");
-  }
-  Serial.println("\nConnected!");
-  Serial.println(WiFi.localIP());
+  while (WiFi.status() != WL_CONNECTED) delay(300);
 
   setupHTTP();
 
   lastReset = millis();
   syncTimeFromPhone();
-  printTime();
 }
 
 // ---------------- Loop ----------------
@@ -226,8 +232,6 @@ void loop() {
   }
 
   if (millis() - lastReset > RESET_INTERVAL) {
-    Serial.println("Auto-resetting ESP32-CAM...");
-    delay(500);  
     esp_restart();
   }
 

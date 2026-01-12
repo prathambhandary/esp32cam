@@ -1,46 +1,65 @@
 import os
 import time
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime
 
 ESP32_IP = "192.168.43.84"
-CHECK_INTERVAL = 5  # seconds
+CHECK_INTERVAL = 15
+
 BASE_DIR = "idle"
 STATIC_DIR = "static"
 CURSOR_FILE = "last_seen.txt"
 
 os.makedirs(BASE_DIR, exist_ok=True)
 os.makedirs(STATIC_DIR, exist_ok=True)
-# print(1)
-# Load last_seen from disk (fast resume)
+
+# ---------- ANSI COLORS ----------
+RESET = "\033[0m"
+DIM = "\033[2m"
+BOLD = "\033[1m"
+RED = "\033[91m"
+GREEN = "\033[92m"
+YELLOW = "\033[93m"
+BLUE = "\033[94m"
+MAGENTA = "\033[95m"
+CYAN = "\033[96m"
+WHITE = "\033[97m"
+
+# ---------- Load last seen ----------
 if os.path.exists(CURSOR_FILE):
     with open(CURSOR_FILE, "r") as f:
         last_seen = f.read().strip() or None
-    flag = True
-    print("Resuming from:", last_seen)
+    print(f"{CYAN}[↻] Resuming session from:{RESET} {WHITE}{last_seen}{RESET}")
 else:
     last_seen = None
-    flag = False
-# print(2)
-def save_cursor(name):
+    print(f"{YELLOW}[!] No cursor found — cold start{RESET}")
+
+
+def save_cursor(value):
     try:
         with open(CURSOR_FILE, "w") as f:
-            f.write(name)
+            f.write(value)
     except Exception as e:
-        print("Cursor save error:", e)
+        print(f"{RED}[X] Cursor write failed:{RESET} {e}")
 
-# ---------- Guessing function ----------
-def next_name(name, n=1):
-    """Return the next second timestamped filename."""
+
+# ---------- Fetch metadata ----------
+def get_last_timestamp():
     try:
-        t = datetime.strptime(name, "%Y%m%d_%H%M%S.jpg")
-        t += timedelta(seconds=n)
-        return t.strftime("%Y%m%d_%H%M%S.jpg")
+        r = requests.get(f"http://{ESP32_IP}/last_timestamp", timeout=15)
+        if r.status_code != 200:
+            return None
+
+        data = r.json()
+        return data.get("name"), data.get("epoch")
+
     except Exception as e:
-        print("next_name parse error:", name, e)
+        print(f"{RED}[NET] Metadata probe failed:{RESET} {e}")
+        time.sleep(10)
         return None
 
-# ---------- Download ----------
+
+# ---------- Download latest ----------
 def download_image(name):
     if not name.endswith(".jpg") or name.startswith("1970"):
         return False
@@ -54,103 +73,92 @@ def download_image(name):
         local_path = os.path.join(save_dir, name)
         url = f"http://{ESP32_IP}/image/{name}"
 
-        for attempt in range(1):
+        for attempt in range(2):
             try:
-                r = requests.get(url, timeout=20)
-                if r.status_code == 200:
-                    with open(local_path, "wb") as f:
-                        f.write(r.content)
-                    with open(os.path.join(STATIC_DIR, "latest.jpg"), "wb") as f:
-                        f.write(r.content)
-                    # print("Downloaded:", name)
-                    save_cursor(name)
-                    return True
-                elif r.status_code == 404:
-                    # print("Failed: ", name)
-                    return False  # guessing stop
-                else:
-                    print(f"HTTP {r.status_code}:", name)
+                r = requests.get(url, timeout=15, stream=True)
+
+                if r.status_code == 404:
+                    return False
+
+                if r.status_code != 200:
+                    print(f"{YELLOW}[HTTP] {r.status_code} @ {name}{RESET}")
+                    continue
+
+                data = r.content
+
+                if len(data) < 10_000:
+                    print(f"{YELLOW}[⚠] Corrupt frame dropped:{RESET} {name}")
+                    return False
+
+                if not data.endswith(b"\xff\xd9"):
+                    print(f"{YELLOW}[⚠] JPEG incomplete:{RESET} {name}")
+                    return False
+
+                with open(local_path, "wb") as f:
+                    f.write(data)
+
+                with open(os.path.join(STATIC_DIR, "latest.jpg"), "wb") as f:
+                    f.write(data)
+
+                save_cursor(name)
+                return True
+
+            except requests.exceptions.Timeout:
+                print(f"{MAGENTA}[TIMEOUT] Waiting on ESP32…{RESET}")
+            except requests.exceptions.RequestException as e:
+                print(f"{RED}[NET] Packet loss:{RESET} {e}")
             except Exception as e:
-                print(f"Retry {attempt+1} failed:", e)
-            time.sleep(0.2)
+                print(f"{RED}[FAIL] Write error:{RESET} {e}")
+
+            time.sleep(0.7)
+
     except Exception as e:
-        print("Parse/save error:", name, e)
+        print(f"{RED}[FS] Path error:{RESET} {e}")
+
     return False
 
+
 # ---------- Main loop ----------
-print("ESP32-CAM hour-wise guessing sync started")
-
-# ---------- ANSI COLORS ----------
-RESET = "\033[0m"
-RED = "\033[91m"
-GREEN = "\033[92m"
-YELLOW = "\033[93m"
-CYAN = "\033[96m"
-MAGENTA = "\033[95m"
-
-# ---------- Main loop prints ----------
-print(f"{CYAN}ESP32-CAM hour-wise guessing sync started{RESET}")
+print(f"""{BOLD}{GREEN}
+┌──────────────────────────────────────────┐
+│  ESP32-CAM LIVE EXFIL CHANNEL ESTABLISHED │
+└──────────────────────────────────────────┘
+{RESET}""")
 
 while True:
     try:
-        if last_seen:
-            if flag:
-                guess = next_name(last_seen, n=14)
-                flag = False
-            else:
-                guess = next_name(last_seen)
-            if not guess:
-                time.sleep(CHECK_INTERVAL)
-                continue
+        meta = get_last_timestamp()
+        if not meta:
+            time.sleep(CHECK_INTERVAL)
+            continue
 
-            # check against current time
-            try:
-                guess_dt = datetime.strptime(guess, "%Y%m%d_%H%M%S.jpg")
-                now = datetime.now()
-                if guess_dt > now:
-                    wait_secs = (guess_dt - now).total_seconds()
-                    if wait_secs > 0:
-                        print(f"{YELLOW}Waiting {30}s for next image: {guess}{RESET}")
-                        # time.sleep(wait_secs+5)
-                        time.sleep(30)
-            except Exception as e:
-                print(f"{RED}Time parse error:{RESET} {guess} -> {e}")
+        name, epoch = meta
 
-            success = download_image(guess)
-            if success:
-                last_seen = guess
-                save_cursor(last_seen)
-                print(f"{GREEN}✔ Downloaded:{RESET} {guess}")
-                time.sleep(0.2)
-                flag = True
-            else:
-                last_seen = guess
-                print(f"{MAGENTA}⏳ File not ready yet:{RESET} {guess}")
-                time.sleep(2)
-                continue
+        if not name or name.startswith("1970"):
+            print(f"{DIM}[SYNC] Clock not ready{RESET}")
+            time.sleep(CHECK_INTERVAL)
+            continue
 
+        if name == last_seen:
+            print(f"{DIM}[IDLE] No new frame{RESET}")
+            time.sleep(CHECK_INTERVAL)
+            continue
+
+        print(f"{CYAN}[→] Target frame:{RESET} {WHITE}{name}{RESET}")
+
+        ok = download_image(name)
+        if ok:
+            last_seen = name
+            ts = datetime.fromtimestamp(epoch).strftime("%Y-%m-%d %H:%M:%S")
+            print(f"{GREEN}[✓] Frame captured:{RESET} {WHITE}{name}{RESET} {DIM}@ {ts}{RESET}")
+            time.sleep(10)
         else:
-            try:
-                url = f"http://{ESP32_IP}/list_idle"
-                print(f"{CYAN}Fetching initial list:{RESET} {url}")
-                r = requests.get(url, timeout=30)
-                if r.status_code == 200:
-                    data = r.json()
-                    if isinstance(data, list) and data:
-                        last_seen = data[-1]
-                        save_cursor(last_seen)
-                        print(f"{GREEN}Starting from:{RESET} {last_seen}")
-                else:
-                    print(f"{RED}List HTTP {r.status_code}{RESET}")
-                    time.sleep(CHECK_INTERVAL)
-            except Exception as e:
-                print(f"{RED}Initial list error:{RESET} {e}")
-                time.sleep(CHECK_INTERVAL)
+            print(f"{MAGENTA}[…] Frame not ready — backing off{RESET}")
+            time.sleep(10)
 
     except KeyboardInterrupt:
-        print(f"{YELLOW}Stopped by user.{RESET}")
+        print(f"\n{YELLOW}[CTRL] Session terminated by operator{RESET}")
         break
     except Exception as e:
-        print(f"{RED}Main loop error:{RESET} {e}")
+        print(f"{RED}[PANIC] Loop failure:{RESET} {e}")
         time.sleep(5)
-      
